@@ -1,121 +1,199 @@
 import { Injectable } from '@nestjs/common';
 import { User } from './user.model';
+import { CRUDReturn } from './crud_return.interface';
+import { Helper } from './helper';
 
+
+const DEBUG: boolean = true;
 @Injectable()
 export class UserService {
+  private users: Map<string, User> = new Map<string, User>();
 
-    private users: Map<number,User> = new Map<number,User>();
+  constructor() {
+    this.users = Helper.populate();
+  }
 
-    constructor (){
-        this.populate();
-    }
 
-    getAll() {
-      var populatedData = [];
-      for (const user of this.users.values()){
-          populatedData.push(user.toJson());
+
+  register(body: any): CRUDReturn {
+    try {
+      var validBody: { valid: boolean; data: string } =
+        Helper.validBodyPut(body);
+      if (validBody.valid) {
+        if (!this.emailExists(body.email)) {
+          var newUser: User = new User(
+            body.name,
+            body.age,
+            body.email,
+            body.password,
+          );
+          if (this.saveToDB(newUser)) {
+            if (DEBUG) this.logAllUsers();
+            return {
+              success: true,
+              data: newUser.toJson(),
+            };
+          } else {
+            throw new Error('generic database error');
+          }
+        } else
+          throw new Error(`${body.email} is already in use by another user!`);
+      } else {
+        throw new Error(validBody.data);
       }
-      return populatedData;
+    } catch (error) {
+      console.log(error.message);
+      return { success: false, data: `Error adding account, ${error.message}` };
     }
+  }
 
-    populate(){
-        this.users.set(1,new User(1,"James",18,"james@email.com","123456"));
-        this.users.set(2,new User(2,"John",18,"john@email.com","143441"));
-        this.users.set(3,new User(3,"Luke",18,"luke@email.com","654321"));
-        this.users.set(4,new User(4,"Judas",13,"judas@email.com","696969"));
+  getOne(id: string): CRUDReturn {
+    if (this.users.has(id)) {
+      return { success: true, data: this.users.get(id).toJson() };
+    } else
+      return {
+        success: false,
+        data: `User ${id} is not in database`,
+      };
+  }
+
+  getAll(): CRUDReturn {
+    var results: Array<any> = [];
+    try {
+      for (const user of this.users.values()) {
+        results.push(user.toJson());
+      }
+      return { success: true, data: results };
+    } catch (e) {
+      return { success: false, data: e };
     }
+  }
 
-    getSpecificUser(id:number) {
+  searchUser(term: string): CRUDReturn {
+    var results: Array<any> = [];
+    for (const user of this.users.values()) {
+      if (user.matches(term)) results.push(user.toJson());
+    }
+    return { success: results.length > 0, data: results };
+  }
 
-        for(const user of this.users.values()) {
-          let json = user.toJson()
-          if(json.id == id) return json;
+  replaceValuePut(id: string, body: any):CRUDReturn {
+    try {
+      if (this.users.has(id)) {
+        var validBodyPut: { valid: boolean; data: string } =
+          Helper.validBodyPut(body);
+        if (validBodyPut.valid) {
+          if (!this.emailExists(body.email, { exceptionId: id })) {
+            var user: User = this.users.get(id);
+            var success = user.replaceValues(body);
+            if (success)
+              return {
+                success: success,
+                data: user.toJson(),
+              };
+            else {
+              throw new Error('Failed to update user in db');
+            }
+          } else {
+            throw new Error(`${body.email} is already in use by another user!`);
+          }
+        } else {
+          throw new Error(validBodyPut.data);
         }
-        
+      } else {
+        throw new Error(`User ${id} is not in database`);
+      }
+    } catch (error) {
+      return {
+        success: false,
+        data: error.message,
+      };
     }
-    
-    addUser(user:any){
-            var newUser: User;
-            var generatedID = this.users.size + 1
-            newUser = new User(generatedID, user.name, user.age, user.email, user.password);
-            this.users.set(generatedID, newUser);
-}
-    loginUser(user:any) {
+  }
 
-    for(const item of this.users.values()) {
-      const json = item.getLoginDetails()
-    
-      if(json.email == user.email) {
-         if(json.password == user.password) return true;
-         else return false;
+  replaceValuePatch(id: string, body: any):CRUDReturn {
+    try {
+      if (this.users.has(id)) {
+        var validBodyPatch: { valid: boolean; data: string } =
+          Helper.validBody(body);
+        if (validBodyPatch.valid) {
+          if (!this.emailExists(body.email, { exceptionId: id })) {
+            var user: User = this.users.get(id);
+            var success = user.replaceValues(body);
+            if (success)
+              return {
+                success: success,
+                data: user.toJson(),
+              };
+            else {
+              throw new Error('Failed to update user in db');
+            }
+          } else {
+            throw new Error(`${body.email} is already in use by another user!`);
+          }
+        } else {
+          throw new Error(validBodyPatch.data);
+        }
+      } else {
+        throw new Error(`User ${id} is not in database`);
+      }
+    } catch (error) {
+      return {
+        success: false,
+        data: error.message,
+      };
+    }
+  }
+
+  deleteUser(id: string): CRUDReturn {
+    if (this.users.has(id)) {
+      return {
+        success: this.users.delete(id),
+        data: `User ${id} has been successfully removed`,
+      };
+    } else
+      return {
+        success: false,
+        data: `User ${id} is not in database`,
+      };
+  }
+
+  login(email: string, password: string) {
+    for (const user of this.users.values()) {
+      if (user.matches(email)) {
+        console.log(email,password);
+        return user.login(password);
       }
     }
-    
+    return { success: false, data: `${email} not found in database` };
+  }
+
+  //secondary functions
+  emailExists(email: string, options?: { exceptionId: string }) {
+    for (const user of this.users.values()) {
+      if (user.matches(email)) {
+        if (
+          options?.exceptionId != undefined &&
+          user.matches(options.exceptionId)
+        )
+          continue;
+        else return true;
+      }
+    }
     return false;
+  }
+
+  saveToDB(user: User): boolean {
+    try {
+      this.users.set(user.id, user);
+      return this.users.has(user.id);
+    } catch (error) {
+      console.log(error);
+      return false;
     }
-    
-    deleteUser(id:number){
-            if(this.users.has(id)){
-            this.users.delete(id);
-            return "User deleted";
-    }
-            return "User not found"
-        }
-        
-    putUser(id: number, body: any) {
+  }
 
-        if(!body.name || !body.email || !body.password || !body.age) 
-        return false;
-            
-        let to_update;
-            
-        for(const user of this.users.values()) {
-              const json = user.toJson();
-              if(json.id == id) {
-                to_update = json;
-                break;
-              }
-            }
-            
-        if(!to_update) return false;
-            
-        this.users.set(id, new User(id, body.name, body.age, body.email, body.password));
-        return true;
-         }
-    replaceUser(id:number, body:any) {
-
-            let to_update;
-            
-            for(const user of this.users.values()) {
-              let json = user.toJson();
-              if(json.id == id) {
-                to_update = json;
-                break;
-              }
-            }
-            
-            if(!to_update) return false;
-            
-            for(const property in body) {
-              if(!(property in ['name', 'age', 'email', 'password'])) return false;
-            
-              to_update[property] = body[property];
-            }
-            
-            this.users.set(id, new User(id, to_update.name, to_update.age, to_update.email, to_update.password));
-            return true;
-            }
-        searchUser(term:string) {
-
-                const results = [];
-                
-                for(const user in this.users.values()) {
-                    let json = (<any>user).toJson();
-                
-                  if(json.name.includes(term)) results.push(json);
-                  else if (json.email.includes(term)) results.push(json);
-                }
-                
-                return results;
-                }
+  logAllUsers() {
+    console.log(this.getAll());
+  }
 }
