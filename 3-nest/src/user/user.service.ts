@@ -2,12 +2,15 @@ import { Injectable } from '@nestjs/common';
 import { User } from './user.model';
 import { CRUDReturn } from './crud_return.interface';
 import { Helper } from './helper';
-
+import * as admin from 'firebase-admin';
+import { lastValueFrom } from 'rxjs';
 
 const DEBUG: boolean = true;
+
 @Injectable()
 export class UserService {
   private users: Map<string, User> = new Map<string, User>();
+  private DB = admin.firestore();
 
   constructor() {
     this.users = Helper.populate();
@@ -15,8 +18,9 @@ export class UserService {
 
 
 
-  register(body: any): CRUDReturn {
+  async register(body: any): Promise<CRUDReturn> {
     try {
+      var emailUsed = await this.emailExists(body.email);
       var validBody: { valid: boolean; data: string } =
         Helper.validBodyPut(body);
       if (validBody.valid) {
@@ -47,27 +51,47 @@ export class UserService {
     }
   }
 
-  getOne(id: string): CRUDReturn {
-    if (this.users.has(id)) {
-      return { success: true, data: this.users.get(id).toJson() };
-    } else
+  async getOne(id: string): Promise<CRUDReturn> {
+    try{
+      var result = await this.DB.collection("users").doc(id).get();
+      if(result.exists){
+        return{
+          success: true,
+          data: result.data(),
+        };
+      }
+      else{
+        return {
+          success: false,
+          data: `User ${id} does not exist in database!`,
+        };
+      }
+    } catch(error) {
+      console.log(error);
       return {
         success: false,
-        data: `User ${id} is not in database`,
-      };
-  }
-
-  getAll(): CRUDReturn {
-    var results: Array<any> = [];
-    try {
-      for (const user of this.users.values()) {
-        results.push(user.toJson());
+        data: error
       }
-      return { success: true, data: results };
-    } catch (e) {
-      return { success: false, data: e };
     }
   }
+
+
+  async getAll(): Promise<CRUDReturn> {
+    var results: Array<any> = [];
+    try {
+      var dbData: FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData> = 
+       await this.DB.collection("users").get();
+      dbData.forEach((doc) => {
+        if (doc.exists) {
+          results.push({id: doc.id, name: doc.data() ['name'], age: doc.data()['age'], emaial: doc.data()['email']})
+        }
+      });
+      return { success: true, data: results};
+    } catch (e) {
+      return { success: false, data: e};
+    }
+  }
+
 
   searchUser(term: string): CRUDReturn {
     var results: Array<any> = [];
@@ -169,22 +193,42 @@ export class UserService {
   }
 
   //secondary functions
-  emailExists(email: string, options?: { exceptionId: string }) {
-    for (const user of this.users.values()) {
-      if (user.matches(email)) {
-        if (
-          options?.exceptionId != undefined &&
-          user.matches(options.exceptionId)
-        )
-          continue;
-        else return true;
+  async emailExists(
+    email: string,
+    options?: {exceptionId: string}
+  ): Promise<boolean>{
+    try{
+      var userResults = await this.DB.collection("users")
+      .where("email", "==", email)
+      .get();
+      console.log("Are the user results empty?");
+      console.log(userResults.empty);
+      if (userResults.empty) return false;
+      for (const doc of userResults.docs){
+        console.log(doc.data());
+        console.log("Are the option defined?");
+        console.log(options != undefined);
+        if (options != undefined){
+          if (doc.id == options?.exceptionId) continue;
+        }
+        if (doc.data()["email"] === email){
+          return true;
+        } else{
+          return false;
+        }
       }
+      return false;
+    } catch (error){
+      console.log("Email exists subfunction error");
+      console.log(error.message);
+      return false;
     }
-    return false;
   }
 
   saveToDB(user: User): boolean {
     try {
+      var potato = this.DB.collection("users").doc(user.id).set(user.toJson());
+      console.log(potato);
       this.users.set(user.id, user);
       return this.users.has(user.id);
     } catch (error) {

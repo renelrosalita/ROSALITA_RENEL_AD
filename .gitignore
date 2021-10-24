@@ -2,6 +2,8 @@
 /3-nest/dist
 /3-nest/node_modules
 
+my-key.json
+
 # Logs
 logs
 *.log

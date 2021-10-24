@@ -2,6 +2,12 @@ import { CRUDReturn } from './crud_return.interface';
 import { Helper } from './helper';
 
 export class User {
+  static Email(Email: any) {
+    throw new Error('Method not implemented.');
+  }
+  static email(email: any) {
+    throw new Error('Method not implemented.');
+  }
   public id: string;
   private name: string;
   private age: number;
